@@ -1,0 +1,1673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Memory Drift</title>
+    <!--
+      This version of Memory Drift is an improved version of the prototype provided.  
+      It addresses several issues noted in the original review:
+      - Added a `.shake` class to match the animation keyframes.  
+      - Introduced responsive sizing using `aspect-ratio` and `clamp()` so that number
+        slots maintain equal proportions across desktop, tablet and mobile screens.  
+      - Added high score persistence using localStorage in the JS fallback.  
+      - Added a chip that indicates whether Python logic (Pyodide) or the JS fallback
+        is active.  
+      - Added basic graceful handling of a missing `sequence_logic.py` file.  
+      - Preserved the look and feel of the original design while avoiding unequal
+        element ratios on different breakpoints.
+    -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
+        :root {
+            --bg-1: #050913;
+            --bg-2: #081227;
+            --card: rgba(8, 12, 25, 0.76);
+            --panel: rgba(12, 17, 34, 0.84);
+            --accent: #7df0ff;
+            --accent-2: #9d7bff;
+            --text: #e9f2ff;
+            --muted: #a5b4d4;
+            --muted-2: #7f8aad;
+            --pill: rgba(255,255,255,0.07);
+            --outline: rgba(255,255,255,0.1);
+            --glow: 0 18px 60px rgba(125,240,255,0.3);
+            --shadow-hard: 0 36px 110px rgba(1,5,14,0.82);
+            --cta-gradient: linear-gradient(135deg, #5cf1ff 0%, #6e8cff 45%, #b574ff 100%);
+            --radius: 20px;
+            --blur: 18px;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', 'Space Grotesk', system-ui, -apple-system, sans-serif;
+            background: radial-gradient(circle at 18% 14%, rgba(125, 240, 255, 0.13), transparent 32%),
+                        radial-gradient(circle at 82% 8%, rgba(157, 123, 255, 0.16), transparent 34%),
+                        radial-gradient(circle at 42% 72%, rgba(40, 180, 255, 0.10), transparent 38%),
+                        linear-gradient(145deg, #030712, #060d1e 52%, #030712 100%);
+            position: relative;
+            min-height: 100vh;
+            margin: 0;
+            color: var(--text);
+            overflow-x: hidden;
+            overflow-y: auto;
+            display: flex;
+            align-items: stretch;
+            justify-content: stretch;
+        }
+        body:not(.page-ready) .header,
+        body:not(.page-ready) .panel,
+        body:not(.page-ready) .challenge-card,
+        body:not(.page-ready) .hero,
+        body:not(.page-ready) .title-lockup {
+            opacity: 0;
+            transform: translateY(14px) scale(0.99);
+        }
+        body.page-ready .header,
+        body.page-ready .panel,
+        body.page-ready .challenge-card,
+        body.page-ready .hero,
+        body.page-ready .title-lockup {
+            opacity: 1;
+            transform: none;
+            transition: opacity 360ms ease, transform 420ms ease;
+        }
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(circle at 78% 18%, rgba(125,240,255,0.22), transparent 36%),
+                radial-gradient(circle at 24% 72%, rgba(157,123,255,0.18), transparent 42%),
+                linear-gradient(120deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0) 22%),
+                linear-gradient(300deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 30%);
+            opacity: 0.7;
+            pointer-events: none;
+            mix-blend-mode: screen;
+            z-index: 0;
+        }
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(80% 60% at 50% 82%, rgba(20,60,140,0.18), transparent 68%),
+                radial-gradient(40% 30% at 16% 40%, rgba(99,224,255,0.12), transparent 55%);
+            pointer-events: none;
+            opacity: 0.7;
+            z-index: 0;
+        }
+
+        .bg-drift {
+            position: fixed;
+            inset: -10%;
+            background: radial-gradient(circle at 30% 20%, rgba(125,240,255,0.09), transparent 35%),
+                        radial-gradient(circle at 72% 28%, rgba(157,123,255,0.13), transparent 42%),
+                        radial-gradient(circle at 50% 60%, rgba(80,140,255,0.08), transparent 44%);
+            filter: blur(26px);
+            opacity: 0.6;
+            animation: drift 18s ease-in-out infinite alternate;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .container {
+            position: relative;
+            width: 100vw;
+            min-height: 100vh;
+            margin: 0;
+            padding: clamp(16px, 3vw, 32px);
+            border-radius: 0;
+            background: linear-gradient(160deg, rgba(255,255,255,0.02), rgba(255,255,255,0.05)), var(--card);
+            box-shadow: var(--shadow-hard);
+            overflow: visible;
+            transition: box-shadow 0.24s ease, transform 0.24s ease;
+            display: grid;
+            grid-template-rows: auto 1fr;
+            gap: 16px;
+            backdrop-filter: blur(var(--blur));
+            isolation: isolate;
+        }
+        .container::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background:
+                repeating-linear-gradient(90deg, rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 1px, transparent 1px, transparent 70px),
+                repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 70px);
+            opacity: 0.4;
+            pointer-events: none;
+            z-index: 1;
+        }
+        .container:hover { box-shadow: 0 40px 124px rgba(2,6,23,0.9); }
+        .glow-ring {
+            width: 520px;
+            height: 520px;
+            filter: blur(32px);
+            top: -160px;
+            right: -120px;
+            pointer-events: none;
+            background: radial-gradient(circle, rgba(125,240,255,0.26), transparent 64%);
+            position: absolute;
+            z-index: 1;
+        }
+        .accent-ring {
+            position:absolute;
+            width:280px;
+            height:280px;
+            top:80px;
+            left:42%;
+            transform:translateX(-50%);
+            background:radial-gradient(circle, rgba(157,123,255,0.18), transparent 64%);
+            filter:blur(30px);
+            opacity:0.7;
+            pointer-events:none;
+            z-index:1;
+        }
+        .header {
+            position: relative;
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:14px;
+            padding: 12px 14px;
+            border-radius: 16px;
+            border: 1px solid rgba(255,255,255,0.06);
+            background: rgba(255,255,255,0.02);
+            backdrop-filter: blur(12px);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+            z-index: 2;
+        }
+        .header-left { display:flex; align-items:center; gap:12px; }
+        .hero { padding: 0; text-align:left; }
+        .hero h1 {
+            font-family: 'Space Grotesk', 'Inter', sans-serif;
+            font-size: clamp(1.8rem, 2vw, 2.4rem);
+            margin: 0;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+        }
+        .hero .subtitle {
+            font-size: 1rem;
+            color: var(--muted);
+            margin-top: 6px;
+            max-width: 520px;
+        }
+        .header-actions { display:flex; align-items:center; gap:10px; margin-left:auto; }
+        #backArrow {
+            position: relative;
+            top: auto;
+            left: auto;
+            width: 44px;
+            height: 44px;
+            border-radius: 14px;
+            border: 1px solid var(--outline);
+            background: rgba(255,255,255,0.06);
+            color: var(--text);
+            font-size: 1.3rem;
+            cursor: pointer;
+            display: inline-flex;
+            backdrop-filter: blur(var(--blur));
+            transition: all 0.18s ease;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.28);
+        }
+        #backArrow:hover { transform: translateY(-2px); background: rgba(255,255,255,0.1); }
+        .main-grid {
+            position: relative;
+            display: grid;
+            grid-template-columns: minmax(320px, 380px) minmax(520px, 1fr);
+            gap: 16px;
+            height: 100%;
+            z-index: 2;
+        }
+        .panel {
+            padding: 16px 16px 14px;
+            border-radius: var(--radius);
+            background: linear-gradient(160deg, rgba(255,255,255,0.025), rgba(255,255,255,0.02)), var(--panel);
+            border: 1px solid rgba(255,255,255,0.06);
+            box-shadow: 0 26px 80px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.05);
+            transition: transform 0.24s ease, box-shadow 0.24s ease, opacity 0.24s ease;
+            backdrop-filter: blur(var(--blur));
+            animation: fadeLift 380ms ease;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            overflow: hidden;
+        }
+        .panel:hover { transform: translateY(-3px); box-shadow: 0 30px 90px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05); }
+        .info-panel { justify-content: space-between; gap: 18px; }
+        .info-blurb h2 {
+            margin: 6px 0 6px;
+            font-size: 1.6rem;
+            letter-spacing: -0.02em;
+            font-family: 'Space Grotesk', 'Inter', sans-serif;
+        }
+        .info-blurb .subtitle {
+            margin: 6px 0 12px;
+            color: var(--muted);
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .pill-block {
+            padding: 10px 12px;
+            border-radius: 12px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.06);
+            color: var(--text);
+            font-weight: 600;
+            letter-spacing: 0.01em;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+        }
+        .highscore-card {
+            padding: 14px;
+            border-radius: 14px;
+            border: 1px solid rgba(125,240,255,0.25);
+            background: linear-gradient(145deg, rgba(125,240,255,0.09), rgba(157,123,255,0.12));
+            box-shadow: 0 18px 50px rgba(8,15,33,0.6);
+        }
+        .highscore-head {
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:10px;
+            margin-bottom: 10px;
+        }
+        .highscore-head h3 {
+            margin:0;
+            font-size:1.05rem;
+            letter-spacing:-0.01em;
+        }
+        .reset-btn {
+            border:none;
+            background: rgba(255,255,255,0.06);
+            color: var(--text);
+            padding: 7px 12px;
+            border-radius: 10px;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            cursor:pointer;
+            transition: all 0.15s ease;
+            border:1px solid rgba(255,255,255,0.12);
+            box-shadow: 0 10px 24px rgba(0,0,0,0.26);
+        }
+        .reset-btn:hover { transform: translateY(-1px); background: rgba(255,255,255,0.1); }
+        .reset-btn:active { transform: scale(0.98); }
+        #highScoreEntryList { width:100%; display:flex; flex-wrap:wrap; gap:10px; }
+        .score-pill {
+            background: rgba(157,123,255,0.18);
+            border:1px solid rgba(157,123,255,0.32);
+            border-radius:999px;
+            padding:9px 16px;
+            font-weight:700;
+            color:#f7fbff;
+            box-shadow: 0 8px 26px rgba(157,123,255,0.28);
+        }
+        .challenge-card {
+            padding: 14px;
+            border-radius: 14px;
+            border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.02);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+            display:flex;
+            flex-direction:column;
+            gap:10px;
+        }
+        .challenge-row {
+            display:flex;
+            align-items:flex-start;
+            justify-content:space-between;
+            gap:10px;
+            padding: 10px 0;
+            border-top:1px solid rgba(255,255,255,0.05);
+        }
+        .challenge-row:first-of-type { border-top:none; padding-top:0; }
+        .challenge-name { font-weight:800; letter-spacing:-0.01em; }
+        .challenge-desc { color:var(--muted); font-size:0.95rem; margin-top:2px; }
+        .challenge-meta { color: rgba(233,240,255,0.8); font-size:0.9rem; margin-top:4px; }
+        .challenge-actions { display:flex; gap:8px; flex-wrap:wrap; }
+        .badge-grid {
+            display:grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap:8px;
+        }
+        .badge {
+            padding:10px 12px;
+            border-radius:12px;
+            border:1px solid rgba(255,255,255,0.06);
+            background: rgba(255,255,255,0.04);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+            display:flex;
+            flex-direction:column;
+            gap:3px;
+        }
+        .badge.unlocked {
+            border-color: rgba(125,240,255,0.4);
+            background: linear-gradient(135deg, rgba(125,240,255,0.18), rgba(157,123,255,0.18));
+            box-shadow: 0 10px 30px rgba(0,0,0,0.28);
+        }
+        .badge.unlock-flash {
+            animation: badgePop 0.7s ease, badgeGlow 1.2s ease;
+        }
+        .badge .name { font-weight:800; letter-spacing:-0.01em; }
+        .badge .desc { color: var(--muted); font-size:0.9rem; }
+        .reset-btn {
+            border:none;
+            background: rgba(255,255,255,0.06);
+            color: var(--text);
+            padding: 7px 12px;
+            border-radius: 10px;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            cursor:pointer;
+            transition: all 0.15s ease;
+            border:1px solid rgba(255,255,255,0.12);
+            box-shadow: 0 10px 24px rgba(0,0,0,0.26);
+        }
+        .reset-btn:hover { transform: translateY(-1px); background: rgba(255,255,255,0.1); }
+        .reset-btn:active { transform: scale(0.98); }
+        .mode-toggle {
+            display:flex;
+            gap:8px;
+            flex-wrap:wrap;
+        }
+        .toggle-chip {
+            border-radius: 12px;
+            border:1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.04);
+            color: var(--text);
+            padding: 9px 12px;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            cursor:pointer;
+            transition: all 0.16s ease;
+            box-shadow: 0 10px 28px rgba(0,0,0,0.28);
+        }
+        .toggle-chip[aria-pressed="true"] {
+            background: linear-gradient(135deg, rgba(125,240,255,0.36), rgba(157,123,255,0.32));
+            border-color: rgba(125,240,255,0.36);
+            color: #041025;
+            box-shadow: 0 16px 40px rgba(125,240,255,0.26);
+        }
+        .toggle-chip:hover { transform: translateY(-1px); }
+        .cta-row { display:flex; flex-direction:column; gap:8px; }
+
+        /* Game area */
+        .play-panel { position: relative; min-height: 0; }
+        .play-area { display:flex; flex-direction:column; gap:12px; align-items:center; justify-content:center; min-height:100%; padding: 8px 8px 10px; }
+        .menuViewCenter {
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            width:100%;
+            min-height: 100%;
+            flex-direction:column;
+            gap:16px;
+            padding:12px 10px;
+        }
+        .menuViewCenter .title-lockup h1 {
+            font-size:3rem;
+            margin:8px 0 8px;
+            letter-spacing: -0.02em;
+            font-weight: 800;
+            font-family: 'Space Grotesk', 'Inter', sans-serif;
+        }
+        .menuViewCenter .title-lockup p {
+            margin:0;
+            color:var(--muted);
+            max-width:600px;
+            font-size:1.0rem;
+            font-weight:500;
+        }
+        #gameView {
+            display:none;
+            width:100%;
+            position:relative;
+            height:100%;
+            flex-direction:column;
+            padding:0 10px 14px;
+            gap: 10px;
+        }
+        .instruction-screen {
+            display:none;
+            width:100%;
+            height:100%;
+            align-items:center;
+            justify-content:center;
+            flex-direction:column;
+            padding:18px;
+            text-align:center;
+            gap:22px;
+        }
+        .instruction-card {
+            max-width:640px;
+            width:100%;
+            padding:28px;
+            border-radius:var(--radius);
+            background: linear-gradient(145deg, rgba(125,240,255,0.16), rgba(157,123,255,0.18));
+            box-shadow: 0 32px 86px rgba(8,11,22,0.62);
+            border:1px solid rgba(255,255,255,0.12);
+            backdrop-filter: blur(var(--blur));
+        }
+        .instruction-card h2 { margin: 6px 0 12px; font-size: 2rem; }
+        .instruction-card p { color: var(--text); }
+        .instruction-card ul {
+            list-style:none;
+            padding:0;
+            margin:14px 0 0;
+            color:var(--text);
+        }
+        .instruction-card li {
+            margin-bottom:10px;
+            background: rgba(255,255,255,0.08);
+            border-radius:12px;
+            padding:12px;
+            font-weight:600;
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+        .instruction-card .gotit {
+            margin-top:22px;
+            width:100%;
+        }
+        .hud {
+            display:grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap:10px;
+            width:100%;
+        }
+        .hud .stat {
+            background: rgba(255,255,255,0.04);
+            padding:12px 14px;
+            border-radius:14px;
+            border:1px solid rgba(255,255,255,0.07);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+            backdrop-filter: blur(var(--blur));
+            height: 100%;
+        }
+        .stat { display:flex; flex-direction:column; align-items:flex-start; gap:2px; }
+        .stat .label { font-size:0.84rem; color:rgba(233,240,255,0.72); letter-spacing:0.02em; font-weight:500; }
+        .stat .value { font-weight:800; font-size:1.14rem; letter-spacing:-0.01em; }
+        .next-up {
+            margin:2px 0 4px;
+            font-size:0.95rem;
+            color:var(--muted);
+            display:flex;
+            align-items:center;
+            gap:12px;
+        }
+        .sequence-display {
+            width: 100%;
+            min-height: 200px;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            gap:12px;
+            padding: 18px 14px;
+            border-radius:18px;
+            border: 1px solid rgba(255,255,255,0.08);
+            background: radial-gradient(140% 100% at 50% 40%, rgba(125,240,255,0.06), rgba(255,255,255,0.02));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 18px 50px rgba(0,0,0,0.4);
+        }
+        .num-slot {
+            width: clamp(70px, 7vw, 120px);
+            aspect-ratio: 11 / 15;
+            border-radius:var(--radius);
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            font-size:3.8rem;
+            font-weight:800;
+            color:var(--text);
+            background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.1), rgba(255,255,255,0.03)),
+                        linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.06));
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 10px 40px rgba(11,18,36,0.38);
+            opacity:0.09;
+            transform:scale(0.96);
+            transition:all 180ms ease, box-shadow 240ms ease;
+        }
+        .num-slot.show {
+            opacity:1;
+            transform:scale(1);
+            box-shadow: 0 28px 70px rgba(125,240,255,0.28);
+            background: linear-gradient(160deg, rgba(125,240,255,0.9), rgba(157,123,255,0.94));
+            color: #041025;
+            text-shadow: 0 6px 20px rgba(0,0,0,0.22);
+            animation: pulseFlash 380ms ease;
+        }
+        .message.big, #phaseMsg {
+            font-family: 'Space Grotesk', 'Inter', sans-serif;
+            font-size: clamp(1.02rem, 1vw + 1rem, 1.42rem);
+            color: var(--text);
+            text-align:center;
+            letter-spacing:-0.01em;
+        }
+        .controls { display:flex; gap:10px; align-items:center; justify-content:center; flex-wrap:wrap; }
+        .keypad { display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; width:520px; max-width:94%; }
+        .key {
+            padding:22px;
+            border-radius:14px;
+            font-weight:800;
+            font-size:1.25rem;
+            background: linear-gradient(145deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+            border:1px solid rgba(255,255,255,0.1);
+            cursor:pointer;
+            color:var(--text);
+            transition: transform 0.14s ease, box-shadow 0.2s ease, background 0.18s ease, opacity 0.16s ease;
+            box-shadow: 0 14px 34px rgba(0,0,0,0.38);
+        }
+        .key.disabled { opacity:0.6; cursor: default; }
+        .key:hover:not(.disabled) { transform: translateY(-1px); box-shadow: 0 16px 36px rgba(0,0,0,0.42); background: rgba(255,255,255,0.1); }
+        .key:active:not(.disabled) { transform: scale(0.98); box-shadow: 0 12px 28px rgba(0,0,0,0.36); }
+        .protip { margin-top:8px; color:rgba(233,240,255,0.76); font-size:0.95rem; text-align:center; letter-spacing:0.01em; }
+        .footer-actions { display:flex; gap:8px; justify-content:center; margin-top:6px; }
+        .btn {
+            padding:13px 22px;
+            border-radius:999px;
+            border:1px solid transparent;
+            cursor:pointer;
+            font-weight:700;
+            letter-spacing:0.01em;
+            transition: transform 0.14s ease, box-shadow 0.2s ease, opacity 0.15s ease, background-position 0.6s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .btn.small { padding:9px 14px; font-size:0.95rem; }
+        .primary {
+            background: var(--cta-gradient);
+            color:#051028;
+            box-shadow: 0 20px 60px rgba(125,240,255,0.38), 0 16px 42px rgba(157,123,255,0.32);
+            background-size: 200% 200%;
+            background-position: 0% 50%;
+        }
+        .primary::after {
+            content:'';
+            position:absolute;
+            inset:-20%;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.02) 35%, rgba(255,255,255,0.25) 70%);
+            transform: translateX(-140%);
+            filter: blur(8px);
+            transition: transform 0.8s ease;
+        }
+        .primary:hover::after { transform: translateX(120%); }
+        .ghost {
+            background: rgba(255,255,255,0.05);
+            color:var(--text);
+            border:1px solid rgba(255,255,255,0.1);
+            opacity:0.85;
+        }
+        .btn:hover { transform: translateY(-1px); box-shadow: 0 18px 54px rgba(0,0,0,0.42); }
+        .btn.primary:hover { background-position: 100% 50%; box-shadow: 0 22px 64px rgba(125,240,255,0.48), 0 16px 44px rgba(157,123,255,0.38); }
+        .btn:active { transform: scale(0.98); }
+        .eyebrow, .chip {
+            display:inline-flex;
+            align-items:center;
+            gap:8px;
+            padding:7px 13px;
+            min-height: 32px;
+            border-radius:999px;
+            background: var(--pill);
+            border: 1px solid var(--outline);
+            color: var(--muted);
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            font-size: 0.82rem;
+            opacity: 0.86;
+        }
+        .eyebrow.compact { padding: 5px 10px; font-size: 0.78rem; }
+        .hero .eyebrow { margin-bottom: 4px; }
+        .subtitle { margin: 0; color: var(--muted); font-weight: 500; letter-spacing: 0.01em; font-size:0.98rem; line-height: 1.4; }
+        .chip.live-chip {
+            border-color: rgba(125,240,255,0.35);
+            color: #a3e9ff;
+            box-shadow: 0 8px 30px rgba(125,240,255,0.25);
+        }
+        .protip strong { color: #fff; }
+        #highScoreEntry h3 { color: var(--text); margin:0; }
+        .helper-note { color:rgba(233,240,255,0.74); font-size:0.94rem; }
+        #resultView {
+            background: rgba(255,255,255,0.04);
+            border:1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            padding: 14px 12px 16px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+        }
+        .shake {
+            animation: shake 420ms ease;
+        }
+        @media (max-width:1200px) {
+            .main-grid { grid-template-columns: 1fr; height: auto; }
+            .container { height: auto; min-height: 100vh; }
+        }
+        @media (max-width:900px) {
+            .header { flex-direction: column; align-items: flex-start; }
+            .hero h1 { font-size: 2rem; }
+            .sequence-display { min-height:170px; }
+            .keypad { width:100%; grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 640px) {
+            .container { padding: 14px; }
+            #backArrow { width: 40px; height: 40px; }
+            .info-grid { grid-template-columns: 1fr; }
+            .panel { padding: 14px; }
+            .key { padding: 18px; }
+            .num-slot { width: clamp(64px, 18vw, 98px); font-size: 3.2rem; }
+        }
+        @keyframes badgePop {
+            0% { transform: scale(0.9); }
+            60% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        @keyframes badgeGlow {
+            0% { box-shadow: 0 0 0 rgba(125,240,255,0.0); }
+            40% { box-shadow: 0 12px 34px rgba(125,240,255,0.28); }
+            100% { box-shadow: 0 10px 30px rgba(0,0,0,0.28); }
+        }
+        @keyframes fadeLift {
+            from { opacity:0; transform: translateY(10px); }
+            to { opacity:1; transform: translateY(0); }
+        }
+        @keyframes pulseFlash {
+            0% { transform: scale(1); }
+            40% { transform: scale(1.04); box-shadow: 0 28px 70px rgba(125,240,255,0.32); }
+            100% { transform: scale(1); }
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            50% { transform: translateX(5px); }
+            75% { transform: translateX(-3px); }
+        }
+        @keyframes drift {
+            from { transform: translate3d(0,0,0) scale(1); }
+            to { transform: translate3d(-3%, 2%, 0) scale(1.04); }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-drift"></div>
+    <div class="container">
+        <div class="glow-ring"></div>
+        <div class="accent-ring"></div>
+        <div class="header">
+            <div class="header-left">
+                <button id="backArrow" aria-label="Back" style="display:none;">←</button>
+                <div class="hero">
+                    <p class="eyebrow">Prototype</p>
+                    <h1>Memory Drift</h1>
+                    <p class="subtitle">Numbers — remember the sequence, repeat it in order.</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div class="chip live-chip">Live build</div>
+                <div class="chip" id="modeChip">Classic mode</div>
+                <div class="chip" id="challengeChip" style="display:none;">Challenge</div>
+            </div>
+        </div>
+
+        <div class="main-grid">
+            <div class="panel info-panel">
+                <div class="info-blurb">
+                    <p class="eyebrow">Focus brief</p>
+                    <h2 class="info-title">Prime your working memory</h2>
+                    <p class="subtitle">Fullscreen layout keeps the keypad anchored and the board glowing so every flash is easy to track.</p>
+                    <div class="info-grid">
+                        <div class="pill-block">Adaptive timer</div>
+                        <div class="pill-block">Keyboard or tap</div>
+                        <div class="pill-block">Local high scores</div>
+                        <div class="pill-block">Python/JS toggle</div>
+                    </div>
+                </div>
+                <div>
+                    <div class="highscore-head" style="margin-bottom:8px;">
+                        <h3>Sequence style</h3>
+                        <span class="eyebrow compact" id="modeDescription">Random digits</span>
+                    </div>
+                    <div class="mode-toggle" id="modeToggle">
+                        <button class="toggle-chip" data-mode="random" aria-pressed="true">Random</button>
+                        <button class="toggle-chip" data-mode="primes" aria-pressed="false">Primes</button>
+                        <button class="toggle-chip" data-mode="fibonacci" aria-pressed="false">Fibonacci</button>
+                        <button class="toggle-chip" data-mode="mirror" aria-pressed="false">Mirror</button>
+                    </div>
+                </div>
+                <div class="challenge-card">
+                    <div class="highscore-head">
+                        <h3>Challenges</h3>
+                        <span class="eyebrow compact" id="challengeDateLabel">Today</span>
+                    </div>
+                    <div class="challenge-row">
+                        <div>
+                            <div class="challenge-name" id="dailyName">Daily Drift</div>
+                            <div class="challenge-desc" id="dailyDesc">Fresh pattern to warm up.</div>
+                            <div class="challenge-meta" id="dailyMeta">Mode • Length mod • Time mod</div>
+                        </div>
+                        <button class="btn ghost small" onclick="activateChallenge('daily')">Play daily</button>
+                    </div>
+                    <div class="challenge-row">
+                        <div>
+                            <div class="challenge-name" id="weeklyName">Weekly Gauntlet</div>
+                            <div class="challenge-desc" id="weeklyDesc">Long-form focus builder.</div>
+                            <div class="challenge-meta" id="weeklyMeta">Mode • Length mod • Time mod</div>
+                        </div>
+                        <button class="btn ghost small" onclick="activateChallenge('weekly')">Play weekly</button>
+                    </div>
+                    <div class="challenge-actions">
+                        <button class="btn ghost small" id="clearChallengeBtn" style="flex:1;">Clear challenge</button>
+                    </div>
+                </div>
+                <div class="challenge-card">
+                    <div class="highscore-head">
+                        <h3>Achievements</h3>
+                        <span class="eyebrow compact">Session save</span>
+                    </div>
+                    <div class="badge-grid" id="achievementsList">
+                        <!-- badges populated -->
+                    </div>
+                </div>
+                <div class="cta-row">
+                    <button id="startBtn" class="btn primary" onclick="startGame()" style="min-width:200px; font-size:1.05rem;">Start Game</button>
+                    <div class="helper-note">Runs best in fullscreen — takes ~2 minutes per run.</div>
+                </div>
+            </div>
+
+            <div class="panel play-panel" id="leftPanel">
+                <div class="play-area" id="mainScreen">
+                    <div id="menuView" class="menuViewCenter">
+                        <div class="title-lockup">
+                            <p class="eyebrow" style="color:var(--text); border-color: rgba(109,211,255,0.22);">Memory mode</p>
+                            <h1>Memory Drift</h1>
+                            <p>Flex your short-term memory and lock in the sequence.</p>
+                        </div>
+                        <div class="helper-note" style="margin-top:6px;">Press Start to view instructions, then repeat each flash in order.</div>
+                        <button class="btn primary" onclick="startGame()" style="min-width:220px; font-size:1.05rem;">Start Game</button>
+                    </div>
+
+                    <div id="instructionScreen" class="instruction-screen">
+                        <div class="instruction-card">
+                            <p class="eyebrow">Read first</p>
+                            <h2>How to Play</h2>
+                            <p>Watch the digits flash across the board, then tap them back in the same order before the timer hits zero.</p>
+                            <ul>
+                                <li>Sequences grow every round</li>
+                                <li>Enter digits using the keypad or the number keys</li>
+                                <li>Stay calm — speed boosts score</li>
+                            </ul>
+                            <button id="instructionAction" class="btn primary gotit" onclick="gotIt()">Got it!</button>
+                        </div>
+                    </div>
+
+                    <div id="gameView">
+
+                        <div class="hud" style="width:100%">
+                            <div class="stat"><div class="label">Level</div><div id="levelVal" class="value">1</div></div>
+                            <div class="stat"><div class="label">Time</div><div id="timeVal" class="value">--</div></div>
+                            <div class="stat"><div class="label">Score</div><div id="scoreVal" class="value">0</div></div>
+                        </div>
+                        <div class="next-up">
+                            <span>Next length: <strong id="nextLen">--</strong></span>
+                            <span>Time: <strong id="nextTime">--</strong></span>
+                        </div>
+
+                        <div class="sequence-display" id="sequenceDisplay">
+                            <!-- number slots -->
+                        </div>
+
+                        <div class="message big" id="phaseMsg">Watch the sequence...</div>
+
+                        <div class="controls" style="width:100%">
+                            <div style="flex:1; display:flex; justify-content:center;">
+                                <div class="keypad" id="keypad">
+                                    <!-- keys injected -->
+                                </div>
+                            </div>
+                        </div>
+                        <div class="protip" id="protipMsg">Tip: tap numbers or use your keyboard (0-9).</div>
+
+                        <div class="footer-actions">
+                            <button id="restartBtn" class="btn ghost" onclick="restartGame()">Restart</button>
+                        </div>
+                    </div>
+
+                    <!-- Game over / Win message area inside left panel -->
+                    <div id="resultView" style="display:none; text-align:center; margin-top:12px">
+                        <div id="resultMsg" class="message big"></div>
+                        <div style="height:10px"></div>
+                        <div>
+                            <button id="resultAction" class="btn primary">Restart Game</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load Pyodide to demonstrate Python logic for sequence generation (optional) -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
+    <script>
+        // Game state
+        let pyodide = null;
+        let pyGen = null;
+        let pyRoundConfig = null;
+        let pyScoreForRound = null;
+        let pyCheckSequence = null;
+        let pyResultMessage = null;
+        let pyGetHighScores = null;
+        let pyGetChallenge = null;
+        let usingPy = false;
+
+        async function initPyodide() {
+            try {
+                pyodide = await loadPyodide({indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.23.4/full/'});
+                const response = await fetch('sequence_logic.py');
+                if (!response.ok) throw new Error('Python logic missing');
+                const code = await response.text();
+                pyodide.runPython(code);
+                pyGen = pyodide.globals.get('generate_sequence');
+                pyRoundConfig = pyodide.globals.get('round_config');
+                pyScoreForRound = pyodide.globals.get('score_for_round');
+                pyCheckSequence = pyodide.globals.get('check_sequence');
+                pyResultMessage = pyodide.globals.get('get_result_message');
+                pyGetHighScores = pyodide.globals.get('get_high_scores');
+                pyGetChallenge = pyodide.globals.get('get_challenge');
+                usingPy = true;
+                console.log('Pyodide ready — using Python logic');
+            } catch (err) {
+                console.warn('Pyodide failed to load Python logic, falling back to JS:', err);
+                usingPy = false;
+            }
+            // update mode chip based on logic availability
+            updateModeChip();
+            loadChallenges();
+        }
+
+        // UI elements
+        const backArrow = document.getElementById('backArrow');
+        const menuView = document.getElementById('menuView');
+        const gameView = document.getElementById('gameView');
+        const resultView = document.getElementById('resultView');
+        const resultMsg = document.getElementById('resultMsg');
+        const resultAction = document.getElementById('resultAction');
+        const sequenceDisplay = document.getElementById('sequenceDisplay');
+        const phaseMsg = document.getElementById('phaseMsg');
+        const levelVal = document.getElementById('levelVal');
+        const timeVal = document.getElementById('timeVal');
+        const scoreVal = document.getElementById('scoreVal');
+        const nextLen = document.getElementById('nextLen');
+        const nextTime = document.getElementById('nextTime');
+        const protipMsg = document.getElementById('protipMsg');
+        const keypad = document.getElementById('keypad');
+        const headerEl = document.querySelector('.header');
+        const instructionScreen = document.getElementById('instructionScreen');
+        const sequenceWrapper = document.getElementById('sequenceDisplay');
+        const modeToggle = document.getElementById('modeToggle');
+        const modeDescription = document.getElementById('modeDescription');
+        const resetScoresBtn = document.getElementById('resetScoresBtn');
+        const challengeChip = document.getElementById('challengeChip');
+        const challengeDateLabel = document.getElementById('challengeDateLabel');
+        const clearChallengeBtn = document.getElementById('clearChallengeBtn');
+        const achievementsList = document.getElementById('achievementsList');
+        const MASTER_LEVEL = 9;
+        let sequenceMode = 'random';
+        const modeDescriptions = {
+            random: 'Random digits for classic play.',
+            primes: 'Digits pulled from prime numbers in order.',
+            fibonacci: 'Digits from the Fibonacci sequence, looping forward.',
+            mirror: 'Symmetric mirror patterns to test recall.'
+        };
+        const achievementDefs = {
+            firstWin: { name: 'First Spark', desc: 'Clear your first round.' },
+            streak3: { name: 'On a Roll', desc: 'Hit a 3-round streak.' },
+            speedster: { name: 'Speedster', desc: 'Finish with 6s left.' },
+            level5: { name: 'Deep Focus', desc: 'Reach level 5.' },
+            challengeClear: { name: 'Challenge Conqueror', desc: 'Beat a daily or weekly target.' }
+        };
+        let achievementState = {};
+        let challenges = { daily: null, weekly: null };
+        let activeChallenge = null;
+        let sequence = [];
+        let playerInput = [];
+        let level = 1;
+        let score = 0;
+        let roundTimer = null;
+        let displayTimer = null;
+        let timeLeft = 0;
+        let acceptingInput = false;
+        let hasShownInstructions = false;
+        let performance = { streak: 0, failures: 0, lastTimeLeft: 0 };
+
+        backArrow.addEventListener('click', () => { goBack(); });
+        if (modeToggle) {
+            modeToggle.querySelectorAll('.toggle-chip').forEach(btn => {
+                btn.addEventListener('click', () => setSequenceMode(btn.dataset.mode));
+            });
+        }
+        if (resetScoresBtn) {
+            resetScoresBtn.addEventListener('click', resetHighScores);
+        }
+        if (clearChallengeBtn) {
+            clearChallengeBtn.addEventListener('click', clearChallenge);
+        }
+        setSequenceMode('random');
+        loadAchievements();
+        initPyodide();
+        loadChallenges();
+        setTimeout(()=> document.body.classList.add('page-ready'), 60);
+
+        function setMenuVisible(visible) {
+            menuView.style.display = visible ? '' : 'none';
+            instructionScreen.style.display = 'none';
+            gameView.style.display = visible ? 'none' : '';
+            backArrow.style.display = visible ? 'none' : 'flex';
+        }
+
+        function startGame() {
+            level = activeChallenge?.startLevel || 1;
+            score = 0;
+            resetPerformance();
+            updateHUD();
+            document.body.classList.remove('gameActive');
+            document.body.classList.add('instructionsActive');
+            menuView.style.display = 'none';
+            instructionScreen.style.display = 'flex';
+            gameView.style.display = 'none';
+            backArrow.style.display = 'flex';
+            resultView.style.display = 'none';
+            phaseMsg.textContent = 'Read the instructions and press Got it! when ready.';
+            setKeypadEnabled(false);
+            document.getElementById('instructionAction').textContent = hasShownInstructions ? 'Play Again' : 'Got it!';
+        }
+
+        function startNewGame() {
+            level = activeChallenge?.startLevel || 1;
+            score = 0;
+            resetPerformance();
+            updateHUD();
+            resultView.style.display = 'none';
+            document.body.classList.remove('gameActive');
+            document.body.classList.add('instructionsActive');
+            menuView.style.display = 'none';
+            instructionScreen.style.display = 'flex';
+            gameView.style.display = 'none';
+            backArrow.style.display = 'flex';
+            phaseMsg.textContent = 'Read the instructions and press Got it! when ready.';
+            setKeypadEnabled(false);
+            document.getElementById('instructionAction').textContent = hasShownInstructions ? 'Play Again' : 'Got it!';
+        }
+
+        function gotIt() {
+            document.body.classList.remove('instructionsActive');
+            document.body.classList.add('gameActive');
+            instructionScreen.style.display = 'none';
+            gameView.style.display = 'flex';
+            phaseMsg.textContent = 'Watch the sequence...';
+            setTimeout(()=> nextRound(), 350);
+            if (!hasShownInstructions) {
+                hasShownInstructions = true;
+                document.getElementById('instructionAction').textContent = 'Play Again';
+            }
+        }
+
+        function restartGame() {
+            clearAllTimers();
+            startNewGame();
+        }
+
+        function clearAllTimers() {
+            if (roundTimer) { clearInterval(roundTimer); roundTimer = null; }
+            if (displayTimer) { clearTimeout(displayTimer); displayTimer = null; }
+        }
+
+        function goBack() {
+            clearAllTimers();
+            acceptingInput = false;
+            playerInput = [];
+            sequence = [];
+            resetPerformance();
+            document.body.classList.remove('instructionsActive', 'gameActive');
+            instructionScreen.style.display = 'none';
+            gameView.style.display = 'none';
+            setMenuVisible(true);
+            phaseMsg.textContent = 'Watch the sequence...';
+            sequenceDisplay.innerHTML = '';
+            timeVal.textContent = '--';
+        }
+
+        function updateHUD() {
+            levelVal.textContent = level;
+            scoreVal.textContent = score;
+        }
+
+        function resetPerformance() {
+            performance = { streak: 0, failures: 0, lastTimeLeft: 0 };
+        }
+
+        function setSequenceMode(mode) {
+            sequenceMode = mode || 'random';
+            updateModeButtons();
+            updateModeChip();
+            if (modeDescription) modeDescription.textContent = modeDescriptions[sequenceMode] || '';
+        }
+
+        function loadAchievements() {
+            try {
+                const stored = localStorage.getItem('md_achievements');
+                achievementState = stored ? JSON.parse(stored) : {};
+            } catch(e) {
+                achievementState = {};
+            }
+            renderAchievements();
+        }
+
+        function saveAchievements() {
+            try { localStorage.setItem('md_achievements', JSON.stringify(achievementState)); }
+            catch(e) { console.warn('Could not save achievements', e); }
+        }
+
+        function unlockAchievement(key) {
+            if (achievementState[key]) return;
+            achievementState[key] = true;
+            saveAchievements();
+            renderAchievements();
+            animateBadge(key);
+        }
+
+        function renderAchievements() {
+            if (!achievementsList) return;
+            achievementsList.innerHTML = '';
+            Object.entries(achievementDefs).forEach(([key, meta]) => {
+                const item = document.createElement('div');
+                item.dataset.key = key;
+                item.className = `badge ${achievementState[key] ? 'unlocked' : ''}`;
+                item.innerHTML = `<div class="name">${meta.name}</div><div class="desc">${meta.desc}</div>`;
+                achievementsList.appendChild(item);
+            });
+        }
+
+        function animateBadge(key) {
+            if (!achievementsList) return;
+            const badge = achievementsList.querySelector(`[data-key="${key}"]`);
+            if (!badge) return;
+            badge.classList.add('unlock-flash', 'unlocked');
+            setTimeout(()=> badge.classList.remove('unlock-flash'), 1400);
+        }
+
+        function checkAchievementsAfterSuccess() {
+            unlockAchievement('firstWin');
+            if (performance.streak >= 3) unlockAchievement('streak3');
+            if (performance.lastTimeLeft >= 6) unlockAchievement('speedster');
+            if (level >= 5) unlockAchievement('level5');
+            if (activeChallenge && score >= (activeChallenge.targetScore || 0)) unlockAchievement('challengeClear');
+        }
+
+        function updateModeButtons() {
+            if (!modeToggle) return;
+            modeToggle.querySelectorAll('.toggle-chip').forEach(btn => {
+                const active = btn.dataset.mode === sequenceMode;
+                btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+            });
+        }
+
+        function updateModeChip() {
+            const labelMap = { random: 'Random', primes: 'Primes', fibonacci: 'Fibonacci', mirror: 'Mirror' };
+            const label = labelMap[sequenceMode] || 'Random';
+            const chip = document.getElementById('modeChip');
+            if (chip) chip.textContent = `${usingPy ? 'Python' : 'JS'} • ${label}`;
+        }
+
+        function updateChallengeChip() {
+            if (!challengeChip) return;
+            if (activeChallenge) {
+                challengeChip.style.display = 'inline-flex';
+                challengeChip.textContent = `${activeChallenge.cadence === 'weekly' ? 'Weekly' : 'Daily'} challenge`;
+            } else {
+                challengeChip.style.display = 'none';
+            }
+        }
+
+        function applyChallengeAdjustments(cfg) {
+            let { length, time } = cfg;
+            if (activeChallenge) {
+                length = Math.max(3, Math.min(18, length + (activeChallenge.lengthMod || 0)));
+                time = Math.max(6, Math.min(40, time + (activeChallenge.timeMod || 0)));
+            }
+            return { length, time };
+        }
+
+        function genSequenceJS(len, mode = 'random') {
+            switch(mode) {
+                case 'primes':
+                    return getPrimeDigitSequence(len);
+                case 'fibonacci':
+                    return getFibonacciDigitSequence(len);
+                case 'mirror':
+                    return getMirrorSequence(len);
+                default:
+                    return getRandomDigits(len);
+            }
+        }
+
+        function getRandomDigits(len) {
+            const arr = [];
+            for (let i=0;i<len;i++) arr.push(Math.floor(Math.random()*10));
+            return arr;
+        }
+
+        function getPrimeDigitSequence(len) {
+            const digits = [];
+            let n = 2;
+            while (digits.length < len) {
+                if (isPrime(n)) {
+                    const parts = String(n).split('');
+                    for (const p of parts) {
+                        digits.push(Number(p));
+                        if (digits.length === len) break;
+                    }
+                }
+                n += 1;
+            }
+            return digits;
+        }
+
+        function isPrime(num) {
+            if (num < 2) return false;
+            for (let i = 2; i * i <= num; i++) {
+                if (num % i === 0) return false;
+            }
+            return true;
+        }
+
+        function getFibonacciDigitSequence(len) {
+            const digits = [];
+            let a = 1, b = 1;
+            while (digits.length < len) {
+                const next = a + b;
+                a = b; b = next;
+                const parts = String(next).split('');
+                for (const p of parts) {
+                    digits.push(Number(p));
+                    if (digits.length === len) break;
+                }
+            }
+            return digits;
+        }
+
+        function getMirrorSequence(len) {
+            const half = Math.ceil(len / 2);
+            const base = [];
+            for (let i=0;i<half;i++) base.push(Math.floor(Math.random()*10));
+            const mirrorPart = base.slice(0, len - half).reverse();
+            return base.concat(mirrorPart);
+        }
+
+        function roundConfigJS(level, perf = {}) {
+            const streak = perf.streak || 0;
+            const failures = perf.failures || 0;
+            const lastTimeLeft = perf.lastTimeLeft ?? 0;
+            const baseLength = Math.min(3 + level, 18);
+            let lengthAdjust = 0;
+            if (streak >= 5) lengthAdjust += 2;
+            else if (streak >= 3) lengthAdjust += 1;
+            if (failures >= 2) lengthAdjust -= 1;
+            const length = Math.max(3, Math.min(18, baseLength + lengthAdjust));
+
+            let time = Math.max(6 + Math.floor(length * 1.2), 6 + level);
+            if (lastTimeLeft >= 6) time -= 2;
+            else if (lastTimeLeft >= 3) time -= 1;
+            if (failures >= 1) time += 2;
+            if (failures >= 2) time += 1;
+            time = Math.max(6, Math.min(40, time));
+            return { length, time };
+        }
+
+        function scoreForRoundJS(seqLen, perf = {}) {
+            const base = seqLen * 12;
+            const streak = perf.streak || 0;
+            const lastTimeLeft = perf.lastTimeLeft || 0;
+            const failures = perf.failures || 0;
+            const streakBonus = Math.min(30, streak * 6);
+            const speedBonus = Math.min(24, Math.max(lastTimeLeft - 2, 0) * 2);
+            const failurePenalty = Math.min(30, failures * 5);
+            return Math.max(seqLen * 5, base + streakBonus + speedBonus - failurePenalty);
+        }
+
+        function checkSequenceJS(player, correct) {
+            if (player.length !== correct.length) return false;
+            for (let i=0;i<player.length;i++) if (player[i] !== correct[i]) return false;
+            return true;
+        }
+
+        function resultMessageJS(success, sequence) {
+            if (success) return 'Correct — next round!';
+            return `Wrong order. Correct digits: ${sequence.join(' ')}`;
+        }
+
+        async function generateSequence(len) {
+            const mode = sequenceMode || 'random';
+            if (usingPy && pyGen) {
+                try {
+                    const seq_py = pyGen(len, 9, mode);
+                    const seq = seq_py.toJs ? seq_py.toJs() : Array.from(seq_py);
+                    try { seq_py.destroy && seq_py.destroy(); } catch(e){}
+                    return seq;
+                } catch (err) {
+                    console.warn('Python generator failed, falling back to JS:', err);
+                    return genSequenceJS(len, mode);
+                }
+            } else {
+                return genSequenceJS(len, mode);
+            }
+        }
+
+        function getHighScoresJS() {
+            // Persist high scores in localStorage. Each entry is { name: 'Player', score: number }
+            try {
+                const stored = localStorage.getItem('md_scores');
+                return stored ? JSON.parse(stored) : [];
+            } catch(e) {
+                return [];
+            }
+        }
+
+        function resetHighScores() {
+            try { localStorage.removeItem('md_scores'); }
+            catch(e) { console.warn('Could not clear scores:', e); }
+            showHighScoresEntry();
+        }
+
+        function hashString(str) {
+            let h = 0;
+            for (let i=0;i<str.length;i++) {
+                h = Math.imul(31, h) + str.charCodeAt(i) | 0;
+            }
+            return h >>> 0;
+        }
+
+        function mulberry32(a) {
+            return function() {
+                a |= 0; a = a + 0x6D2B79F5 | 0;
+                let t = Math.imul(a ^ a >>> 15, 1 | a);
+                t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+                return ((t ^ t >>> 14) >>> 0) / 4294967296;
+            };
+        }
+
+        function getChallengeJS(cadence = 'daily') {
+            const now = new Date();
+            const dateStr = cadence === 'weekly'
+                ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay() + 1).toISOString().slice(0,10)
+                : now.toISOString().slice(0,10);
+            const seed = hashString(`${cadence}-${dateStr}`);
+            const rand = mulberry32(seed);
+            const modes = ['random','primes','fibonacci','mirror'];
+            const mode = modes[Math.floor(rand()*modes.length)];
+            const startLevel = cadence === 'weekly' ? 2 + Math.floor(rand()*4) : 1 + Math.floor(rand()*3);
+            const lengthModOptions = cadence === 'weekly' ? [-1,0,0,1,2] : [-1,0,0,1];
+            const timeModOptions = cadence === 'weekly' ? [-2,-1,0,0,1] : [-1,0,0,1];
+            const lengthMod = lengthModOptions[Math.floor(rand()*lengthModOptions.length)];
+            const timeMod = timeModOptions[Math.floor(rand()*timeModOptions.length)];
+            const targetScore = Math.max(60, (startLevel + 4) * 18 + Math.max(0,lengthMod)*10 + Math.max(0,-timeMod)*8);
+            const name = cadence === 'weekly' ? 'Weekly Gauntlet' : 'Daily Drift';
+            const description = cadence === 'weekly'
+                ? 'Longer focus run with tighter timing.'
+                : 'Quick warm-up to keep your recall sharp.';
+            return { cadence, mode, startLevel, lengthMod, timeMod, targetScore, name, description, date: dateStr };
+        }
+
+        async function fetchChallenge(cadence) {
+            if (usingPy && pyGetChallenge) {
+                try {
+                    const pyObj = pyGetChallenge(cadence);
+                    const jsObj = pyObj.toJs ? pyObj.toJs() : pyObj;
+                    try { pyObj.destroy && pyObj.destroy(); } catch(e){}
+                    return jsObj;
+                } catch(e) {
+                    console.warn('Python challenge failed, using JS:', e);
+                }
+            }
+            return getChallengeJS(cadence);
+        }
+
+        function challengeMetaText(ch) {
+            if (!ch) return '';
+            const modeLabel = { random:'Random', primes:'Primes', fibonacci:'Fibonacci', mirror:'Mirror' }[ch.mode] || 'Random';
+            const len = ch.lengthMod || 0;
+            const time = ch.timeMod || 0;
+            const lenText = len === 0 ? 'length ±0' : `length ${len>0?'+':''}${len}`;
+            const timeText = time === 0 ? 'time ±0' : `time ${time>0?'+':''}${time}`;
+            return `${modeLabel} • start L${ch.startLevel || 1} • ${lenText} • ${timeText} • target ${ch.targetScore || ''}`;
+        }
+
+        function updateChallengeUI(cadence, data) {
+            if (!data) return;
+            const prefix = cadence === 'weekly' ? 'weekly' : 'daily';
+            const nameEl = document.getElementById(`${prefix}Name`);
+            const descEl = document.getElementById(`${prefix}Desc`);
+            const metaEl = document.getElementById(`${prefix}Meta`);
+            if (nameEl) nameEl.textContent = data.name || `${prefix} challenge`;
+            if (descEl) descEl.textContent = data.description || '';
+            if (metaEl) metaEl.textContent = challengeMetaText(data);
+        }
+
+        async function loadChallenges() {
+            try {
+                challenges.daily = await fetchChallenge('daily');
+                challenges.weekly = await fetchChallenge('weekly');
+                updateChallengeUI('daily', challenges.daily);
+                updateChallengeUI('weekly', challenges.weekly);
+                if (challengeDateLabel) challengeDateLabel.textContent = new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            } catch(e) {
+                console.warn('Failed to load challenges', e);
+            }
+        }
+
+        function activateChallenge(cadence) {
+            const pick = cadence === 'weekly' ? challenges.weekly : challenges.daily;
+            if (!pick) return;
+            activeChallenge = pick;
+            setSequenceMode(pick.mode || 'random');
+            updateChallengeChip();
+            startGame();
+        }
+
+        function clearChallenge() {
+            activeChallenge = null;
+            updateChallengeChip();
+        }
+
+        function saveHighScore(name, value) {
+            try {
+                const scores = getHighScoresJS();
+                scores.push({ name, score: value });
+                scores.sort((a,b) => b.score - a.score);
+                localStorage.setItem('md_scores', JSON.stringify(scores.slice(0,10)));
+            } catch(e) {
+                console.warn('Could not save high score:', e);
+            }
+        }
+
+        async function showHighScoresEntry() {
+            const highScoreDiv = document.getElementById('highScoreEntryList');
+            if (!highScoreDiv) return;
+            let scores = [];
+            if (usingPy && pyGetHighScores) {
+                try {
+                    const pyScores = pyGetHighScores();
+                    scores = pyScores.toJs ? pyScores.toJs() : pyScores;
+                    try { pyScores.destroy && pyScores.destroy(); } catch(e){}
+                } catch(e) { scores = getHighScoresJS(); }
+            } else {
+                scores = getHighScoresJS();
+            }
+            highScoreDiv.innerHTML = '';
+            if (scores.length === 0) {
+                highScoreDiv.innerHTML = '<div class="message" style="font-size:0.98rem; display:flex; align-items:center; gap:6px; color:rgba(233,240,255,0.78);"><span style="opacity:0.6;">🥇</span><span>Be the first to set a record</span></div>';
+            } else {
+                scores.slice(0,5).forEach(entry => {
+                    const el = document.createElement('div');
+                    el.className = 'score-pill';
+                    el.textContent = `${entry.name} • ${entry.score}`;
+                    highScoreDiv.appendChild(el);
+                });
+            }
+        }
+
+        // UI: create keypad
+        function buildKeypad() {
+            keypad.innerHTML = '';
+            for (let i=1;i<=9;i++) {
+                const btn = document.createElement('button');
+                btn.className = 'key disabled';
+                btn.textContent = String(i);
+                btn.dataset.val = String(i);
+                btn.onclick = () => keyPressed(btn.dataset.val);
+                keypad.appendChild(btn);
+            }
+            // zero at end
+            const zero = document.createElement('button');
+            zero.className = 'key disabled';
+            zero.textContent = '0';
+            zero.dataset.val = '0';
+            zero.onclick = () => keyPressed(zero.dataset.val);
+            // place zero in middle-bottom
+            const filler1 = document.createElement('div'); filler1.style.visibility = 'hidden';
+            const filler2 = document.createElement('div'); filler2.style.visibility = 'hidden';
+            keypad.appendChild(filler1);
+            keypad.appendChild(zero);
+            keypad.appendChild(filler2);
+        }
+        buildKeypad();
+
+        function setKeypadEnabled(enabled) {
+            const keys = keypad.querySelectorAll('.key');
+            keys.forEach(k => {
+                k.classList.toggle('disabled', !enabled);
+            });
+            acceptingInput = enabled;
+        }
+
+        function setNextUp(len, seconds) {
+            nextLen.textContent = len;
+            nextTime.textContent = `${seconds}s`;
+        }
+
+        function setProtip(text) {
+            protipMsg.textContent = text;
+        }
+
+        function showFullSequence() {
+            sequenceDisplay.innerHTML = '';
+            sequence.forEach(num => {
+                const slot = document.createElement('div');
+                slot.className = 'num-slot show';
+                slot.textContent = num;
+                sequenceDisplay.appendChild(slot);
+            });
+        }
+
+        function keyPressed(val) {
+            if (!acceptingInput) return;
+            playerInput.push(Number(val));
+            flashInputSlot(playerInput.length-1);
+            checkProgress();
+        }
+
+        function flashInputSlot(idx) {
+            const slots = sequenceDisplay.querySelectorAll('.num-slot');
+            if (slots[idx]) {
+                const el = slots[idx];
+                el.classList.add('show');
+                setTimeout(()=> el.classList.remove('show'), 350);
+            }
+        }
+
+        async function nextRound() {
+            clearAllTimers();
+            playerInput = [];
+            sequenceDisplay.innerHTML = '';
+            let len, timeAllowance;
+            if (usingPy && pyRoundConfig) {
+                try {
+                    const cfg = pyRoundConfig(level, performance);
+                    const jsCfg = cfg.toJs ? cfg.toJs() : cfg;
+                    len = jsCfg.length; timeAllowance = jsCfg.time;
+                    try { cfg.destroy && cfg.destroy(); } catch(e){}
+                } catch (e) {
+                    ({ length: len, time: timeAllowance } = roundConfigJS(level, performance));
+                }
+            } else {
+                ({ length: len, time: timeAllowance } = roundConfigJS(level, performance));
+            }
+            ({ length: len, time: timeAllowance } = applyChallengeAdjustments({ length: len, time: timeAllowance }));
+            setNextUp(len, timeAllowance);
+            sequence = await generateSequence(len);
+            updateHUD();
+            // create slots
+            for (let i=0;i<sequence.length;i++) {
+                const slot = document.createElement('div');
+                slot.className = 'num-slot';
+                slot.textContent = '\u00A0';
+                sequenceDisplay.appendChild(slot);
+            }
+            // show sequence one by one
+            phaseMsg.textContent = 'Watch the sequence...';
+            setProtip('Watch closely. Numbers will flash in order.');
+            setKeypadEnabled(false);
+            await showSequence(sequence);
+            // allow input
+            phaseMsg.textContent = 'Repeat the sequence by pressing the numbers.';
+            setProtip('Tap or type 0-9 in order.');
+            setKeypadEnabled(true);
+            startTimer(timeAllowance);
+        }
+
+        function startTimer(seconds) {
+            timeLeft = seconds;
+            timeVal.textContent = `${timeLeft}s`;
+            if (roundTimer) clearInterval(roundTimer);
+            roundTimer = setInterval(()=>{
+                timeLeft -= 1;
+                timeVal.textContent = `${timeLeft}s`;
+                if (timeLeft <= 0) {
+                    clearInterval(roundTimer);
+                    onRoundFail('Time ran out');
+                }
+            }, 1000);
+        }
+
+        async function showSequence(seq) {
+            const slots = sequenceDisplay.querySelectorAll('.num-slot');
+            for (let i=0;i<seq.length;i++) {
+                if (menuView.style.display !== 'none') return; // aborted
+                // update slot content
+                slots[i].textContent = seq[i];
+                // animate show
+                slots[i].classList.add('show');
+                await sleep(700);
+                slots[i].classList.remove('show');
+                await sleep(180);
+                slots[i].textContent = '\u00A0';
+            }
+            // small pause
+            await sleep(250);
+        }
+
+        function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+        function checkProgress() {
+            const pos = playerInput.length - 1;
+            if (playerInput[pos] !== sequence[pos]) {
+                onRoundFail('Wrong number');
+                return;
+            }
+            // correct so far
+            // reveal the pressed slot
+            const slots = sequenceDisplay.querySelectorAll('.num-slot');
+            slots[pos].textContent = sequence[pos];
+            slots[pos].classList.add('show');
+            setTimeout(()=> slots[pos].classList.remove('show'), 400);
+
+            if (playerInput.length === sequence.length) {
+                const success = usingPy && pyCheckSequence ? (()=>{try{return pyCheckSequence(playerInput, sequence);}catch(e){return checkSequenceJS(playerInput, sequence);}})() : checkSequenceJS(playerInput, sequence);
+                if (success) {
+                    onRoundSuccess();
+                } else {
+                    onRoundFail('Wrong number');
+                }
+            }
+        }
+
+        function onRoundSuccess() {
+            clearAllTimers();
+            const finishedTimeLeft = Math.max(timeLeft, 0);
+            performance.streak += 1;
+            performance.failures = 0;
+            performance.lastTimeLeft = finishedTimeLeft;
+            if (usingPy && pyScoreForRound) {
+                try { score += pyScoreForRound(sequence.length, performance); }
+                catch(e) { score += scoreForRoundJS(sequence.length, performance); }
+            } else {
+                score += scoreForRoundJS(sequence.length, performance);
+            }
+            level += 1;
+            updateHUD();
+            checkAchievementsAfterSuccess();
+            if (level > MASTER_LEVEL) {
+                showMasteryMessage();
+                return;
+            }
+            const msg = usingPy && pyResultMessage ? (()=>{try{return pyResultMessage(true, sequence);}catch(e){return resultMessageJS(true, sequence);}})() : resultMessageJS(true, sequence);
+            phaseMsg.textContent = msg;
+            setKeypadEnabled(false);
+            fireworks();
+            setTimeout(()=> nextRound(), 1000 + Math.min(level*80, 1200));
+        }
+
+        function showMasteryMessage() {
+            setKeypadEnabled(false);
+            phaseMsg.textContent = 'You mastered this prototype segment!';
+            resultMsg.textContent = 'You have mastered the current part. Memory Drift is still in development—come back soon for more challenges!';
+            resultView.style.display = '';
+            resultAction.textContent = 'Play Again';
+            resultAction.onclick = () => { restartGame(); };
+            document.getElementById('instructionAction').textContent = 'Play Again';
+            // Save high score
+            saveHighScore('Player', score);
+            showHighScoresEntry();
+        }
+
+        function onRoundFail(reason) {
+            clearAllTimers();
+            const remaining = Math.max(timeLeft, 0);
+            performance.streak = 0;
+            performance.failures += 1;
+            performance.lastTimeLeft = remaining;
+            setKeypadEnabled(false);
+            let userMessage = '';
+            if (reason === 'Wrong number') {
+                const msg = usingPy && pyResultMessage ? (()=>{try{return pyResultMessage(false, sequence);}catch(e){return resultMessageJS(false, sequence);}})() : resultMessageJS(false, sequence);
+                userMessage = msg;
+            } else if (reason === 'Time ran out') {
+                userMessage = 'Out of time. Correct digits:';
+            } else {
+                userMessage = `${reason}.`;
+            }
+            phaseMsg.textContent = userMessage;
+            showFullSequence();
+            document.getElementById('instructionAction').textContent = 'Play Again';
+            resultMsg.textContent = userMessage;
+            resultView.style.display = '';
+            resultAction.onclick = () => { restartGame(); };
+            setProtip('Press Restart to try again.');
+            sequenceWrapper.classList.add('shake');
+            setTimeout(()=> sequenceWrapper.classList.remove('shake'), 420);
+            // Save high score
+            saveHighScore('Player', score);
+            showHighScoresEntry();
+        }
+
+        function fireworks() {
+            // tiny visual: pulse glow on container
+            const cont = document.querySelector('.container');
+            cont.style.transition = 'box-shadow 200ms ease';
+            cont.style.boxShadow = '0 40px 100px rgba(109,211,255,0.18)';
+            setTimeout(()=> cont.style.boxShadow = '0 30px 80px rgba(2,6,23,0.6)', 350);
+        }
+
+        // Start on load with menu visible
+        setMenuVisible(true);
+        setKeypadEnabled(false);
+        showHighScoresEntry();
+
+        document.addEventListener('keydown', handleKeydown);
+
+        function handleKeydown(evt) {
+            if (!document.body.classList.contains('gameActive')) return;
+            if (!/^[0-9]$/.test(evt.key)) return;
+            evt.preventDefault();
+            keyPressed(evt.key);
+        }
+    </script>
+</body>
+</html>
